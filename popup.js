@@ -1,4 +1,5 @@
 const copyButton = document.querySelector('#copy-images');
+const askChatGPTButton = document.querySelector('#ask-chatgpt');
 const fillButton = document.querySelector('#fill-answers');
 const clearButton = document.querySelector('#clear-answers');
 const answerInput = document.querySelector('#answers');
@@ -15,8 +16,16 @@ answerInput.addEventListener('keydown', (event) => {
   if (event.key === 'Enter') fillButton.click();
 });
 
+askChatGPTButton.addEventListener('click', async () => {
+  const prompt = `I will paste an image containing multiple-choice questions. Answer every question. First, list each answer with its correct option letter and the full option text. Then provide a fenced Markdown code block containing only the option letters (A/B/C/D), in question order, separated by commas. Do not include any other text inside the code block.`;
+  const url = new URL('https://chatgpt.com/');
+  url.searchParams.set('q', prompt);
+  await chrome.tabs.create({ url: url.toString() });
+});
+
 copyButton.addEventListener('click', async () => {
   setBusy(copyButton, true, 'Stacking images…');
+  askChatGPTButton.hidden = true;
   clearMessage();
 
   try {
@@ -35,8 +44,10 @@ copyButton.addEventListener('click', async () => {
     const skipped = result.total - result.copied;
     showMessage(
       `${result.copied} image${result.copied === 1 ? '' : 's'} copied as ${result.width}×${result.height}px`
-      + (skipped ? ` · ${skipped} skipped` : ''),
+      + (skipped ? ` · ${skipped} skipped` : '')
+      + ' · paste it into ChatGPT',
     );
+    askChatGPTButton.hidden = false;
   } catch (error) {
     showMessage(error.message || 'Clipboard access was refused.', true);
   } finally {

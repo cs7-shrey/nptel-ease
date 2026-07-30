@@ -26,6 +26,8 @@ body {
 button,
 input { font: inherit; }
 
+[hidden] { display: none !important; }
+
 .desk { padding: 16px; }
 
 .masthead {
@@ -186,6 +188,11 @@ button.secondary:hover:not(:disabled) {
   border-color: #515159;
   color: var(--text);
   background: var(--surface-hover);
+}
+
+button.follow-up {
+  margin-top: 8px;
+  border-color: #44444b;
 }
 
 .arrow {
