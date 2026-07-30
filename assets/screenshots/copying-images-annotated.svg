@@ -1,0 +1,20 @@
+<svg width="1280" height="800" viewBox="0 0 1280 800" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="frame"><rect width="1280" height="800" rx="30"/></clipPath>
+    <clipPath id="shot"><rect x="26" y="103" width="1228" height="593"/></clipPath>
+  </defs>
+  <g clip-path="url(#frame)">
+    <rect width="1280" height="800" fill="#F2EEE6"/>
+    <text x="640" y="77" text-anchor="middle" fill="#17171A" font-family="Verdana" font-size="62" font-weight="700" letter-spacing="-2">Copy Questions Instantly</text>
+    <g clip-path="url(#shot)">
+      <image href="copying-images.png" x="26" y="103" width="1228" height="731" preserveAspectRatio="xMidYMin slice"/>
+    </g>
+    <rect x="26" y="103" width="1228" height="593" fill="none" stroke="#17171A" stroke-opacity="0.12" stroke-width="2"/>
+    <text x="45" y="765" fill="#17171A" font-family="Verdana" font-size="48" font-weight="700" letter-spacing="-1.6">Copy images or text in one click.</text>
+    <g transform="translate(1162 712)">
+      <path d="M42 0L84 42L42 84L0 42L42 0Z" fill="#E54D4D"/>
+      <path d="M42 17L67 42L42 67L17 42L42 17Z" fill="#17171A"/>
+      <path d="M42 29L55 42L42 55L29 42L42 29Z" fill="#3A3A40"/>
+    </g>
+  </g>
+</svg>
