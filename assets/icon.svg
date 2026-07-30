@@ -1,0 +1,13 @@
+<svg width="512" height="512" viewBox="0 0 512 512" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Abstract capture mark: four interlocking facets around a central aperture. -->
+  <rect x="16" y="16" width="480" height="480" rx="116" fill="#151518"/>
+  <rect x="25" y="25" width="462" height="462" rx="107" stroke="#FFFFFF" stroke-opacity="0.08" stroke-width="18"/>
+
+  <path d="M256 72L348 180L256 246L164 180L256 72Z" fill="#FF6B6B"/>
+  <path d="M440 256L332 348L266 256L332 164L440 256Z" fill="#E54D4D"/>
+  <path d="M256 440L164 332L256 266L348 332L256 440Z" fill="#C93849"/>
+  <path d="M72 256L180 164L246 256L180 348L72 256Z" fill="#F0545D"/>
+
+  <path d="M256 190L322 256L256 322L190 256L256 190Z" fill="#151518"/>
+  <path d="M256 218L294 256L256 294L218 256L256 218Z" fill="#2D2D32"/>
+</svg>
