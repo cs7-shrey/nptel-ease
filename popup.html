@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>NPTEL Desk</title>
+    <link rel="stylesheet" href="popup.css">
+  </head>
+  <body>
+    <main class="desk">
+      <header class="masthead">
+        <div class="app-mark" aria-hidden="true">N</div>
+        <div>
+          <h1>NPTEL Tools</h1>
+          <p>Practice question utilities</p>
+        </div>
+      </header>
+
+      <section class="tool" aria-labelledby="images-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="images-title">Question images</h2>
+            <p>Stack all images into a single PNG.</p>
+          </div>
+          <span class="shortcut" aria-hidden="true">01</span>
+        </div>
+        <button id="copy-images" type="button">
+          <span>Copy to clipboard</span>
+          <span class="arrow" aria-hidden="true">⌘C</span>
+        </button>
+      </section>
+
+      <section class="tool" aria-labelledby="answers-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="answers-title">Answers</h2>
+            <p>Fill up to ten questions in order.</p>
+          </div>
+          <span class="shortcut" aria-hidden="true">02</span>
+        </div>
+        <label for="answers">Answer sequence</label>
+        <div class="input-wrap">
+          <input id="answers" type="text" inputmode="text" autocomplete="off"
+            spellcheck="false" placeholder="A, C, B, D" aria-describedby="answer-hint">
+          <span id="answer-count">0/10</span>
+        </div>
+        <p class="hint" id="answer-hint">A–J · separated by commas or spaces</p>
+        <div class="actions">
+          <button id="fill-answers" type="button">
+            <span>Fill answers</span>
+            <span class="arrow" aria-hidden="true">↵</span>
+          </button>
+          <button id="clear-answers" class="secondary" type="button">
+            <span>Clear answers</span>
+          </button>
+        </div>
+      </section>
+
+      <div id="message" class="message" role="status" aria-live="polite"></div>
+      <footer>Works on an open NPTEL practice-question page.</footer>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

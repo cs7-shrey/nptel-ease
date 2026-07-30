@@ -1,11 +1,12 @@
 {
   "manifest_version": 3,
-  "name": "Stack Question Images",
-  "description": "Downloads the question images on the page, stacks them vertically, and copies the sheet to the clipboard.",
-  "version": "1.0",
+  "name": "NPTEL Question Desk",
+  "description": "Copies stacked question images and fills answer choices on NPTEL practice pages.",
+  "version": "2.0",
   "permissions": [
     "activeTab",
-    "scripting"
+    "scripting",
+    "clipboardWrite"
   ],
   "host_permissions": [
     "https://onlinecourses.nptel.ac.in/*",
@@ -15,6 +16,7 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "Stack question images"
+    "default_title": "Open NPTEL Question Desk",
+    "default_popup": "popup.html"
   }
 }
