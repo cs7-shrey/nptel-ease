@@ -1,0 +1,42 @@
+<svg width="440" height="280" viewBox="0 0 1622 1026" preserveAspectRatio="none" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="frame">
+      <rect width="1622" height="1026" rx="62"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="1622" height="1026" fill="#F2EEE6"/>
+
+    <!-- Brand header -->
+    <g transform="translate(398 44)">
+      <rect width="174" height="174" rx="44" fill="#151518"/>
+      <path d="M87 18L124 62L87 89L50 62L87 18Z" fill="#FF6B6B"/>
+      <path d="M156 87L113 124L86 87L113 50L156 87Z" fill="#E54D4D"/>
+      <path d="M87 156L50 113L87 86L124 113L87 156Z" fill="#C93849"/>
+      <path d="M18 87L61 50L88 87L61 124L18 87Z" fill="#F0545D"/>
+      <path d="M87 61L113 87L87 113L61 87L87 61Z" fill="#151518"/>
+      <path d="M87 74L100 87L87 100L74 87L87 74Z" fill="#303036"/>
+    </g>
+    <text x="606" y="168" fill="#17171A" font-family="Verdana" font-size="112" font-weight="700" letter-spacing="-5">NPTEL Ease</text>
+
+    <!-- Feature field -->
+    <rect y="260" width="1622" height="482" fill="#E8B9B9"/>
+    <path d="M0 261H1622" stroke="#17171A" stroke-opacity="0.05" stroke-width="2"/>
+    <path d="M0 741H1622" stroke="#17171A" stroke-opacity="0.05" stroke-width="2"/>
+
+    <!-- Oversized abstract capture mark -->
+    <g transform="translate(581 271)">
+      <path d="M230 10L372 176L230 278L88 176L230 10Z" fill="#FF6569"/>
+      <path d="M450 230L284 372L182 230L284 88L450 230Z" fill="#D93F4F"/>
+      <path d="M230 450L88 284L230 182L372 284L230 450Z" fill="#BB3043"/>
+      <path d="M10 230L176 88L278 230L176 372L10 230Z" fill="#EF4F5C"/>
+      <path d="M230 128L332 230L230 332L128 230L230 128Z" fill="#17171A"/>
+      <path d="M230 174L286 230L230 286L174 230L230 174Z" fill="#39393F"/>
+    </g>
+
+    <!-- Message -->
+    <text x="811" y="851" text-anchor="middle" fill="#17171A" font-family="Verdana" font-size="70" font-weight="700" letter-spacing="-2.4">Copy questions. Fill answers.</text>
+    <text x="811" y="937" text-anchor="middle" fill="#17171A" font-family="Verdana" font-size="70" font-weight="700" letter-spacing="-2.4">Keep moving.</text>
+  </g>
+</svg>

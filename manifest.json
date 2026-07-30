@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
-  "name": "NPTEL Question Desk",
-  "description": "Copies stacked question images and fills answer choices on NPTEL practice pages.",
+  "name": "NPTEL Ease",
+  "description": "Copies NPTEL questions as images or text, fills single- and multiple-choice answers, and hands prompts off to ChatGPT.",
   "version": "2.0",
   "permissions": [
     "activeTab",
@@ -22,7 +22,7 @@
     "128": "assets/icon-128.png"
   },
   "action": {
-    "default_title": "Open NPTEL Question Desk",
+    "default_title": "Open NPTEL Ease",
     "default_popup": "popup.html",
     "default_icon": {
       "16": "assets/icon-16.png",

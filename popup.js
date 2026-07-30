@@ -1,4 +1,5 @@
 const copyButton = document.querySelector('#copy-images');
+const copyTextButton = document.querySelector('#copy-text');
 const askChatGPTButton = document.querySelector('#ask-chatgpt');
 const fillButton = document.querySelector('#fill-answers');
 const clearButton = document.querySelector('#clear-answers');
@@ -7,9 +8,9 @@ const answerCount = document.querySelector('#answer-count');
 const message = document.querySelector('#message');
 
 answerInput.addEventListener('input', () => {
-  const count = parseAnswers(answerInput.value).length;
-  answerCount.textContent = `${count}/10`;
-  answerCount.style.color = count > 10 ? '#f07178' : '';
+  const answers = parseAnswers(answerInput.value);
+  answerCount.textContent = String(answers.length);
+  answerCount.style.color = answers.some((answer) => !/^[A-J]+$/.test(answer)) ? '#f07178' : '';
 });
 
 answerInput.addEventListener('keydown', (event) => {
@@ -17,10 +18,36 @@ answerInput.addEventListener('keydown', (event) => {
 });
 
 askChatGPTButton.addEventListener('click', async () => {
-  const prompt = `I will paste an image containing multiple-choice questions. Answer every question. First, list each answer with its correct option letter and the full option text. Then provide a fenced Markdown code block containing only the option letters (A/B/C/D), in question order, separated by commas. Do not include any other text inside the code block.`;
+  const prompt = `I will paste content containing multiple-choice questions. Answer every question. First, list each answer with its correct option letter and the full option text. Then provide a fenced Markdown code block containing only the option letters (A/B/C/D), in question order, separated by commas. Do not include any other text inside the code block.`;
   const url = new URL('https://chatgpt.com/');
   url.searchParams.set('q', prompt);
   await chrome.tabs.create({ url: url.toString() });
+});
+
+copyTextButton.addEventListener('click', async () => {
+  setBusy(copyTextButton, true, 'Copying…');
+  askChatGPTButton.hidden = true;
+  clearMessage();
+
+  try {
+    const tab = await getActiveNptelTab();
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      func: collectTextQuestions,
+    });
+
+    if (!result?.ok) throw new Error(result?.error || 'Could not read the questions.');
+
+    await navigator.clipboard.writeText(result.text);
+    showMessage(
+      `${result.count} text question${result.count === 1 ? '' : 's'} copied · paste into ChatGPT`,
+    );
+    askChatGPTButton.hidden = false;
+  } catch (error) {
+    showMessage(error.message || 'Could not copy the question text.', true);
+  } finally {
+    setBusy(copyTextButton, false);
+  }
 });
 
 copyButton.addEventListener('click', async () => {
@@ -90,8 +117,8 @@ fillButton.addEventListener('click', async () => {
     return;
   }
 
-  if (answers.length > 10) {
-    showMessage('Use no more than ten answers.', true);
+  if (answers.some((answer) => !/^[A-J]+$/.test(answer))) {
+    showMessage('Use choices A–J, with commas between questions. Example: A, ACD, B.', true);
     answerInput.focus();
     return;
   }
@@ -121,7 +148,12 @@ fillButton.addEventListener('click', async () => {
 });
 
 function parseAnswers(value) {
-  return (value.toUpperCase().match(/[A-J]/g) || []);
+  return value
+    .toUpperCase()
+    .replace(/[\[\]{}()]/g, '')
+    .split(/[\s,]+/)
+    .map((answer) => answer.trim())
+    .filter(Boolean);
 }
 
 async function getActiveNptelTab() {
@@ -154,6 +186,48 @@ function clearMessage() {
 }
 
 /** This function is serialized and run in the active page. */
+function collectTextQuestions() {
+  const root = document.querySelector('main[class*="practice-questions"]');
+  if (!root) {
+    return { ok: false, error: 'Could not find the practice questions on this page.' };
+  }
+
+  const sections = [...root.querySelectorAll('section')].filter((section) => {
+    const question = section.querySelector('[class*="question-content"]');
+    return question && question.closest('section') === section;
+  });
+
+  const questions = sections.map((section) => {
+    const question = section.querySelector('[class*="question-content"]')?.innerText
+      .replace(/\s+/g, ' ')
+      .trim();
+    const options = [...section.querySelectorAll('label')]
+      .map((label) => label.innerText.replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+
+    return question && options.length ? { question, options } : null;
+  }).filter(Boolean).map(({ question, options }, questionIndex) => {
+    const optionLines = options.map((option, optionIndex) => {
+      const letter = String.fromCharCode(65 + optionIndex);
+      const content = option.replace(/^[A-Z][.)]\s*/i, '');
+      return `${letter}. ${content}`;
+    });
+
+    return `${questionIndex + 1}. ${question}\n${optionLines.join('\n')}`;
+  });
+
+  if (!questions.length) {
+    return { ok: false, error: 'No text questions with labeled options were found.' };
+  }
+
+  return {
+    ok: true,
+    count: questions.length,
+    text: questions.join('\n\n'),
+  };
+}
+
+/** This function is serialized and run in the active page. */
 function clearQuestionAnswers() {
   const root = document.querySelector('main[class*="practice-questions"]');
   if (!root) {
@@ -161,7 +235,7 @@ function clearQuestionAnswers() {
   }
 
   const selected = [...root.querySelectorAll(
-    'input[type="radio"]:checked, input[type="checkbox"]:checked, [role="radio"][aria-checked="true"]',
+    'input[type="radio"]:checked, input[type="checkbox"]:checked, [role="radio"][aria-checked="true"], [role="checkbox"][aria-checked="true"]',
   )];
 
   // Prefer the site's own clear controls so its application state stays in sync.
@@ -191,26 +265,25 @@ function fillQuestionAnswers(answers) {
     return { ok: false, error: 'Could not find the practice questions on this page.' };
   }
 
-  const groups = [];
-  const nativeRadios = [...root.querySelectorAll('input[type="radio"]')]
-    .filter((radio) => !radio.disabled);
+  const nativeChoices = [...root.querySelectorAll(
+    'input[type="radio"], input[type="checkbox"]',
+  )].filter((choice) => !choice.disabled);
+  const choices = nativeChoices.length
+    ? nativeChoices
+    : [...root.querySelectorAll('[role="radio"], [role="checkbox"]')]
+      .filter((choice) => choice.getAttribute('aria-disabled') !== 'true');
 
-  if (nativeRadios.length) {
-    const byName = new Map();
-    nativeRadios.forEach((radio, index) => {
-      const container = radio.closest('[role="radiogroup"], fieldset');
-      const key = radio.name || container || `unnamed-${index}`;
-      if (!byName.has(key)) byName.set(key, []);
-      byName.get(key).push(radio);
-    });
-    groups.push(...byName.values());
-  } else {
-    const roleGroups = [...root.querySelectorAll('[role="radiogroup"]')]
-      .map((group) => [...group.querySelectorAll('[role="radio"]')]
-        .filter((radio) => radio.getAttribute('aria-disabled') !== 'true'))
-      .filter((group) => group.length);
-    groups.push(...roleGroups);
-  }
+  // A section represents one question. Choices are ordered as they appear,
+  // making A the first input, B the second, and so on.
+  const byQuestion = new Map();
+  choices.forEach((choice, index) => {
+    const section = choice.closest('section');
+    const namedGroup = choice instanceof HTMLInputElement ? choice.name : null;
+    const key = section || namedGroup || `unnamed-${index}`;
+    if (!byQuestion.has(key)) byQuestion.set(key, []);
+    byQuestion.get(key).push(choice);
+  });
+  const groups = [...byQuestion.values()];
 
   if (!groups.length) {
     return { ok: false, error: 'No answer choices were found. Expand or load the questions first.' };
@@ -220,22 +293,47 @@ function fillQuestionAnswers(answers) {
   const failed = [];
 
   answers.forEach((answer, questionIndex) => {
-    const choiceIndex = answer.charCodeAt(0) - 65;
-    const choice = groups[questionIndex]?.[choiceIndex];
+    const group = groups[questionIndex];
+    const selectedIndexes = new Set(
+      [...answer].map((letter) => letter.charCodeAt(0) - 65),
+    );
+    const hasMultipleChoiceInputs = group?.some((choice) =>
+      (choice instanceof HTMLInputElement && choice.type === 'checkbox')
+      || choice.getAttribute('role') === 'checkbox');
 
-    if (!choice) {
+    if (
+      !group
+      || [...selectedIndexes].some((choiceIndex) => !group[choiceIndex])
+      || (selectedIndexes.size > 1 && !hasMultipleChoiceInputs)
+    ) {
       failed.push(questionIndex + 1);
       return;
     }
 
-    choice.scrollIntoView({ block: 'center', behavior: 'auto' });
-    choice.click();
+    group[0].scrollIntoView({ block: 'center', behavior: 'auto' });
 
-    if (choice instanceof HTMLInputElement && !choice.checked) {
-      choice.checked = true;
-      choice.dispatchEvent(new Event('input', { bubbles: true }));
-      choice.dispatchEvent(new Event('change', { bubbles: true }));
-    }
+    group.forEach((choice, choiceIndex) => {
+      const shouldSelect = selectedIndexes.has(choiceIndex);
+      const isCheckbox = (choice instanceof HTMLInputElement && choice.type === 'checkbox')
+        || choice.getAttribute('role') === 'checkbox';
+
+      if (choice instanceof HTMLInputElement) {
+        if (isCheckbox && choice.checked !== shouldSelect) choice.click();
+        if (!isCheckbox && shouldSelect && !choice.checked) choice.click();
+
+        if (choice.checked !== shouldSelect && isCheckbox) {
+          const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'checked');
+          descriptor?.set?.call(choice, shouldSelect);
+          choice.dispatchEvent(new Event('input', { bubbles: true }));
+          choice.dispatchEvent(new Event('change', { bubbles: true }));
+        }
+      } else {
+        const isSelected = choice.getAttribute('aria-checked') === 'true';
+        if ((isCheckbox && isSelected !== shouldSelect) || (!isCheckbox && shouldSelect && !isSelected)) {
+          choice.click();
+        }
+      }
+    });
 
     filled += 1;
   });
