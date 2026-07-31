@@ -1,4 +1,4 @@
-const copyButton = document.querySelector('#copy-images');
+const copyButton = document.querySelector('#copy-all');
 const copyTextButton = document.querySelector('#copy-text');
 const askChatGPTButton = document.querySelector('#ask-chatgpt');
 const fillButton = document.querySelector('#fill-answers');
@@ -51,18 +51,18 @@ copyTextButton.addEventListener('click', async () => {
 });
 
 copyButton.addEventListener('click', async () => {
-  setBusy(copyButton, true, 'Stacking images…');
+  setBusy(copyButton, true, 'Preparing…');
   askChatGPTButton.hidden = true;
   clearMessage();
 
   try {
     const tab = await getActiveNptelTab();
     const result = await chrome.runtime.sendMessage({
-      type: 'STACK_QUESTION_IMAGES',
+      type: 'COPY_QUESTIONS_AS_IMAGE',
       tabId: tab.id,
     });
 
-    if (!result?.ok) throw new Error(result?.error || 'Could not prepare the image.');
+    if (!result?.ok) throw new Error(result?.error || 'Could not prepare the questions.');
 
     const bytes = Uint8Array.from(atob(result.base64), (character) => character.charCodeAt(0));
     const blob = new Blob([bytes], { type: 'image/png' });
@@ -70,7 +70,7 @@ copyButton.addEventListener('click', async () => {
 
     const skipped = result.total - result.copied;
     showMessage(
-      `${result.copied} image${result.copied === 1 ? '' : 's'} copied as ${result.width}×${result.height}px`
+      `${result.copied} question${result.copied === 1 ? '' : 's'} copied as ${result.width}×${result.height}px`
       + (skipped ? ` · ${skipped} skipped` : '')
       + ' · paste it into ChatGPT',
     );
