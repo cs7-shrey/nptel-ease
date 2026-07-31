@@ -1,5 +1,5 @@
-const copyButton = document.querySelector('#copy-all');
-const copyTextButton = document.querySelector('#copy-text');
+const copyFullButton = document.querySelector('#copy-full');
+const copyImagesButton = document.querySelector('#copy-images');
 const askChatGPTButton = document.querySelector('#ask-chatgpt');
 const fillButton = document.querySelector('#fill-answers');
 const clearButton = document.querySelector('#clear-answers');
@@ -24,61 +24,69 @@ askChatGPTButton.addEventListener('click', async () => {
   await chrome.tabs.create({ url: url.toString() });
 });
 
-copyTextButton.addEventListener('click', async () => {
-  setBusy(copyTextButton, true, 'Copying…');
-  askChatGPTButton.hidden = true;
-  clearMessage();
-
-  try {
-    const tab = await getActiveNptelTab();
-    const [{ result }] = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: collectTextQuestions,
-    });
-
-    if (!result?.ok) throw new Error(result?.error || 'Could not read the questions.');
-
-    await navigator.clipboard.writeText(result.text);
-    showMessage(
-      `${result.count} text question${result.count === 1 ? '' : 's'} copied · paste into ChatGPT`,
-    );
-    askChatGPTButton.hidden = false;
-  } catch (error) {
-    showMessage(error.message || 'Could not copy the question text.', true);
-  } finally {
-    setBusy(copyTextButton, false);
-  }
-});
-
-copyButton.addEventListener('click', async () => {
-  setBusy(copyButton, true, 'Preparing…');
+copyFullButton.addEventListener('click', async () => {
+  setBusy(copyFullButton, true, 'Preparing…');
   askChatGPTButton.hidden = true;
   clearMessage();
 
   try {
     const tab = await getActiveNptelTab();
     const result = await chrome.runtime.sendMessage({
-      type: 'COPY_QUESTIONS_AS_IMAGE',
+      type: 'COPY_FULL_ASSIGNMENT',
       tabId: tab.id,
     });
 
     if (!result?.ok) throw new Error(result?.error || 'Could not prepare the questions.');
 
-    const bytes = Uint8Array.from(atob(result.base64), (character) => character.charCodeAt(0));
-    const blob = new Blob([bytes], { type: 'image/png' });
-    await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    if (result.format === 'text') {
+      await navigator.clipboard.writeText(result.text);
+      showMessage(
+        `${result.copied} text question${result.copied === 1 ? '' : 's'} copied · paste into ChatGPT`,
+      );
+    } else {
+      await copyPngResult(result);
+      const skipped = result.total - result.copied;
+      showMessage(
+        `${result.copied} question${result.copied === 1 ? '' : 's'} copied as ${result.width}×${result.height}px`
+        + (skipped ? ` · ${skipped} skipped` : '')
+        + ' · paste into ChatGPT',
+      );
+    }
 
+    askChatGPTButton.hidden = false;
+  } catch (error) {
+    showMessage(error.message || 'Clipboard access was refused.', true);
+  } finally {
+    setBusy(copyFullButton, false);
+  }
+});
+
+copyImagesButton.addEventListener('click', async () => {
+  setBusy(copyImagesButton, true, 'Stacking…');
+  askChatGPTButton.hidden = true;
+  clearMessage();
+
+  try {
+    const tab = await getActiveNptelTab();
+    const result = await chrome.runtime.sendMessage({
+      type: 'STACK_QUESTION_IMAGES',
+      tabId: tab.id,
+    });
+
+    if (!result?.ok) throw new Error(result?.error || 'Could not prepare the images.');
+
+    await copyPngResult(result);
     const skipped = result.total - result.copied;
     showMessage(
-      `${result.copied} question${result.copied === 1 ? '' : 's'} copied as ${result.width}×${result.height}px`
+      `${result.copied} image${result.copied === 1 ? '' : 's'} copied as ${result.width}×${result.height}px`
       + (skipped ? ` · ${skipped} skipped` : '')
-      + ' · paste it into ChatGPT',
+      + ' · paste into ChatGPT',
     );
     askChatGPTButton.hidden = false;
   } catch (error) {
     showMessage(error.message || 'Clipboard access was refused.', true);
   } finally {
-    setBusy(copyButton, false);
+    setBusy(copyImagesButton, false);
   }
 });
 
@@ -156,6 +164,12 @@ function parseAnswers(value) {
     .filter(Boolean);
 }
 
+async function copyPngResult(result) {
+  const bytes = Uint8Array.from(atob(result.base64), (character) => character.charCodeAt(0));
+  const blob = new Blob([bytes], { type: 'image/png' });
+  await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+}
+
 async function getActiveNptelTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab?.id) throw new Error('No active tab found.');
@@ -183,48 +197,6 @@ function showMessage(text, isError = false) {
 function clearMessage() {
   message.textContent = '';
   message.className = 'message';
-}
-
-/** This function is serialized and run in the active page. */
-function collectTextQuestions() {
-  const root = document.querySelector('main[class*="practice-questions"]');
-  if (!root) {
-    return { ok: false, error: 'Could not find the practice questions on this page.' };
-  }
-
-  const sections = [...root.querySelectorAll('section')].filter((section) => {
-    const question = section.querySelector('[class*="question-content"]');
-    return question && question.closest('section') === section;
-  });
-
-  const questions = sections.map((section) => {
-    const question = section.querySelector('[class*="question-content"]')?.innerText
-      .replace(/\s+/g, ' ')
-      .trim();
-    const options = [...section.querySelectorAll('label')]
-      .map((label) => label.innerText.replace(/\s+/g, ' ').trim())
-      .filter(Boolean);
-
-    return question && options.length ? { question, options } : null;
-  }).filter(Boolean).map(({ question, options }, questionIndex) => {
-    const optionLines = options.map((option, optionIndex) => {
-      const letter = String.fromCharCode(65 + optionIndex);
-      const content = option.replace(/^[A-Z][.)]\s*/i, '');
-      return `${letter}. ${content}`;
-    });
-
-    return `${questionIndex + 1}. ${question}\n${optionLines.join('\n')}`;
-  });
-
-  if (!questions.length) {
-    return { ok: false, error: 'No text questions with labeled options were found.' };
-  }
-
-  return {
-    ok: true,
-    count: questions.length,
-    text: questions.join('\n\n'),
-  };
 }
 
 /** This function is serialized and run in the active page. */
