@@ -2,6 +2,7 @@ const SELECTOR = 'main[class*="practice-questions"]';
 const GAP = 24;
 const TEXT_WIDTH = 900;
 const TEXT_PADDING = 48;
+const RENDER_SCALE = 2;
 const BACKGROUND = '#ffffff';
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
@@ -65,25 +66,30 @@ async function createFullAssignment(tabId) {
 
   const widestImage = Math.max(0, ...items
     .flatMap((item) => item.bitmaps.map((bitmap) => bitmap.width)));
-  const width = Math.max(TEXT_WIDTH, widestImage);
+  const logicalWidth = Math.max(TEXT_WIDTH, widestImage);
   const measureContext = new OffscreenCanvas(1, 1).getContext('2d');
-  const layouts = items.map((item) => layoutQuestion(measureContext, item, width));
-  const height = layouts.reduce((sum, layout) => sum + layout.height, 0)
+  const layouts = items.map((item) => layoutQuestion(measureContext, item, logicalWidth));
+  const logicalHeight = layouts.reduce((sum, layout) => sum + layout.height, 0)
     + GAP * (layouts.length - 1);
+  const width = logicalWidth * RENDER_SCALE;
+  const height = logicalHeight * RENDER_SCALE;
 
   const canvas = new OffscreenCanvas(width, height);
   const context = canvas.getContext('2d');
+  context.scale(RENDER_SCALE, RENDER_SCALE);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
   context.fillStyle = BACKGROUND;
-  context.fillRect(0, 0, width, height);
+  context.fillRect(0, 0, logicalWidth, logicalHeight);
 
   let y = 0;
   layouts.forEach((layout, index) => {
-    drawQuestion(context, layout, y, width);
+    drawQuestion(context, layout, y, logicalWidth);
     y += layout.height;
 
     if (index < layouts.length - 1) {
       context.fillStyle = '#ececef';
-      context.fillRect(0, y, width, GAP);
+      context.fillRect(0, y, logicalWidth, GAP);
       y += GAP;
     }
   });
@@ -121,17 +127,22 @@ async function stackQuestionImages(tabId) {
   const bitmaps = await fetchBitmaps(urls);
   if (!bitmaps.length) throw new Error('The question images could not be loaded.');
 
-  const width = Math.max(...bitmaps.map((bitmap) => bitmap.width));
-  const height = bitmaps.reduce((sum, bitmap) => sum + bitmap.height, 0)
+  const logicalWidth = Math.max(...bitmaps.map((bitmap) => bitmap.width));
+  const logicalHeight = bitmaps.reduce((sum, bitmap) => sum + bitmap.height, 0)
     + GAP * (bitmaps.length - 1);
+  const width = logicalWidth * RENDER_SCALE;
+  const height = logicalHeight * RENDER_SCALE;
   const canvas = new OffscreenCanvas(width, height);
   const context = canvas.getContext('2d');
+  context.scale(RENDER_SCALE, RENDER_SCALE);
+  context.imageSmoothingEnabled = true;
+  context.imageSmoothingQuality = 'high';
   context.fillStyle = BACKGROUND;
-  context.fillRect(0, 0, width, height);
+  context.fillRect(0, 0, logicalWidth, logicalHeight);
 
   let y = 0;
   bitmaps.forEach((bitmap, index) => {
-    const x = Math.round((width - bitmap.width) / 2);
+    const x = Math.round((logicalWidth - bitmap.width) / 2);
     context.drawImage(bitmap, x, y);
     y += bitmap.height;
     bitmap.close();

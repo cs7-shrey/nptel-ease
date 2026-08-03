@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "NPTEL Ease",
   "description": "Copies NPTEL questions as images or text, fills single- and multiple-choice answers, and hands prompts off to ChatGPT.",
-  "version": "2.0",
+  "version": "2.1",
   "permissions": [
     "activeTab",
     "scripting",
