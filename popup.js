@@ -9,7 +9,13 @@ const clearButton = document.querySelector('#clear-answers');
 const answerInput = document.querySelector('#answers');
 const answerCount = document.querySelector('#answer-count');
 const message = document.querySelector('#message');
+const INCLUDE_TRANSCRIPTS_KEY = 'includeLectureTranscripts';
 let copiedQuestions = null;
+
+includeTranscriptsToggle.checked = localStorage.getItem(INCLUDE_TRANSCRIPTS_KEY) === 'true';
+includeTranscriptsToggle.addEventListener('change', () => {
+  localStorage.setItem(INCLUDE_TRANSCRIPTS_KEY, String(includeTranscriptsToggle.checked));
+});
 
 answerInput.addEventListener('input', () => {
   const answers = parseAnswers(answerInput.value);
