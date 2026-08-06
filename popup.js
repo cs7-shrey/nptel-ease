@@ -1,5 +1,6 @@
 const copyFullButton = document.querySelector('#copy-full');
 const copyImagesButton = document.querySelector('#copy-images');
+const copyTranscriptsButton = document.querySelector('#copy-transcripts');
 const askChatGPTButton = document.querySelector('#ask-chatgpt');
 const fillButton = document.querySelector('#fill-answers');
 const clearButton = document.querySelector('#clear-answers');
@@ -90,6 +91,46 @@ copyImagesButton.addEventListener('click', async () => {
   }
 });
 
+copyTranscriptsButton.addEventListener('click', async () => {
+  setBusy(copyTranscriptsButton, true, 'Finding lectures…');
+  askChatGPTButton.hidden = true;
+  clearMessage();
+
+  try {
+    const granted = await chrome.permissions.request({
+      origins: ['https://www.youtube.com/*'],
+    });
+    if (!granted) throw new Error('YouTube access is required to retrieve captions.');
+
+    const tab = await getActiveNptelTab();
+    const pageUrl = new URL(tab.url);
+    const courseId = pageUrl.pathname.match(/\/course\/(noc[^/?]+)/i)?.[1];
+    const unitId = Number(pageUrl.searchParams.get('unitId'));
+    if (!courseId || !unitId) {
+      throw new Error('Open an NPTEL assignment page with a course and unit ID first.');
+    }
+
+    const videos = await discoverWeekVideos(tab.id, courseId, unitId);
+    const result = await chrome.runtime.sendMessage({
+      type: 'FETCH_LECTURE_TRANSCRIPTS',
+      videos,
+    });
+    if (!result?.ok) throw new Error(result?.error || 'Could not retrieve the transcripts.');
+
+    await navigator.clipboard.writeText(result.text);
+    const skipped = result.total - result.copied;
+    showMessage(
+      `${result.copied} lecture transcript${result.copied === 1 ? '' : 's'} copied`
+      + (skipped ? ` · ${skipped} without English captions` : ''),
+    );
+    askChatGPTButton.hidden = false;
+  } catch (error) {
+    showMessage(error.message || 'Could not copy the lecture transcripts.', true);
+  } finally {
+    setBusy(copyTranscriptsButton, false);
+  }
+});
+
 clearButton.addEventListener('click', async () => {
   clearMessage();
   setBusy(clearButton, true, 'Clearing…');
@@ -162,6 +203,111 @@ function parseAnswers(value) {
     .split(/[\s,]+/)
     .map((answer) => answer.trim())
     .filter(Boolean);
+}
+
+async function discoverWeekVideos(tabId, courseId, unitId) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: async (selectedCourseId, selectedUnitId) => {
+      try {
+        const fetchJson = async (url) => {
+          const response = await fetch(url, { credentials: 'include' });
+          if (!response.ok) throw new Error(`NPTEL returned HTTP ${response.status}.`);
+          let data = await response.json();
+
+          for (let depth = 0; depth < 5; depth += 1) {
+            if (typeof data === 'string') {
+              data = JSON.parse(data);
+            } else if (
+              data
+              && typeof data === 'object'
+              && Object.hasOwn(data, 'payload')
+              && data.payload != null
+            ) {
+              data = data.payload;
+            } else {
+              break;
+            }
+          }
+
+          if (data?.content === 'not visible') {
+            throw new Error('Authenticated NPTEL content is not visible.');
+          }
+          if (data?.status === false && data.message) throw new Error(data.message);
+          return data;
+        };
+
+        const outlineUrl = new URL('/e-learning/api/courseoutline', location.origin);
+        outlineUrl.searchParams.set('course_id', selectedCourseId);
+        const responseData = await fetchJson(outlineUrl);
+        const findOutline = (value, depth = 0) => {
+          if (!value || depth > 5) return null;
+          if (typeof value === 'string') {
+            try {
+              return findOutline(JSON.parse(value), depth + 1);
+            } catch {
+              return null;
+            }
+          }
+          if (typeof value !== 'object') return null;
+          if (value.lessons && value.order) return value;
+          for (const child of Object.values(value)) {
+            const match = findOutline(child, depth + 1);
+            if (match) return match;
+          }
+          return null;
+        };
+        const outline = findOutline(responseData);
+        if (!outline) throw new Error('Course outline fields were not found.');
+
+        const lessons = Object.values(outline.lessons || {});
+        const unitOrder = Array.isArray(outline.order)
+          ? outline.order.find((entry) => Number(entry.id) === selectedUnitId)
+          : null;
+        let lessonIds = (unitOrder?.children || [])
+          .filter((child) => child.section === 'lesson')
+          .map((child) => Number(child.id))
+          .filter((lessonId) => lessons.some((lesson) =>
+            Number(lesson.lesson_id) === lessonId
+            && Number(lesson.unit_id) === selectedUnitId));
+
+        if (!lessonIds.length) {
+          lessonIds = lessons
+            .filter((lesson) => Number(lesson.unit_id) === selectedUnitId)
+            .map((lesson) => Number(lesson.lesson_id));
+        }
+        lessonIds = [...new Set(lessonIds)];
+        if (!lessonIds.length) throw new Error(`No lessons found for unit ${selectedUnitId}.`);
+
+        const lessonResults = await Promise.allSettled(lessonIds.map(async (lessonId) => {
+          const lessonUrl = new URL('/e-learning/api/lesson', location.origin);
+          lessonUrl.searchParams.set('course_id', selectedCourseId);
+          lessonUrl.searchParams.set('unit_id', String(selectedUnitId));
+          lessonUrl.searchParams.set('lesson_id', String(lessonId));
+          const payload = await fetchJson(lessonUrl);
+          const lesson = payload.lesson;
+          const videoId = lesson?.video?.trim();
+          return lesson && videoId
+            ? { title: lesson.title || `Lesson ${lessonId}`, videoId }
+            : null;
+        }));
+
+        return {
+          videos: lessonResults
+            .filter((lesson) => lesson.status === 'fulfilled' && lesson.value)
+            .map((lesson) => lesson.value),
+        };
+      } catch (error) {
+        return { error: error.message || String(error) };
+      }
+    },
+    args: [courseId, unitId],
+  });
+
+  if (result?.error) throw new Error(result.error);
+  if (!result?.videos?.length) throw new Error('No video lectures were found for this week.');
+  return result.videos;
 }
 
 async function copyPngResult(result) {

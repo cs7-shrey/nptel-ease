@@ -1,8 +1,8 @@
 {
   "manifest_version": 3,
   "name": "NPTEL Ease",
-  "description": "Copies NPTEL questions as images or text, fills single- and multiple-choice answers, and hands prompts off to ChatGPT.",
-  "version": "2.1",
+  "description": "Copies NPTEL questions and weekly lecture transcripts, fills answer choices, and hands prompts off to ChatGPT.",
+  "version": "2.2",
   "permissions": [
     "activeTab",
     "scripting",
@@ -11,6 +11,9 @@
   "host_permissions": [
     "https://onlinecourses.nptel.ac.in/*",
     "https://storage.googleapis.com/*"
+  ],
+  "optional_host_permissions": [
+    "https://www.youtube.com/*"
   ],
   "background": {
     "service_worker": "background.js"
