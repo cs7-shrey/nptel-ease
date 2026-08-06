@@ -190,11 +190,6 @@ button.secondary:hover:not(:disabled) {
   background: var(--surface-hover);
 }
 
-button.follow-up {
-  margin-top: 8px;
-  border-color: #44444b;
-}
-
 .handoff { margin-top: 8px; }
 
 .toggle-row {

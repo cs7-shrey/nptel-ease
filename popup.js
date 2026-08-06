@@ -1,6 +1,5 @@
 const copyFullButton = document.querySelector('#copy-full');
 const copyImagesButton = document.querySelector('#copy-images');
-const copyTranscriptsButton = document.querySelector('#copy-transcripts');
 const chatGPTActions = document.querySelector('#chatgpt-actions');
 const includeTranscriptsToggle = document.querySelector('#include-transcripts');
 const askChatGPTButton = document.querySelector('#ask-chatgpt');
@@ -147,34 +146,6 @@ copyImagesButton.addEventListener('click', async () => {
     showMessage(error.message || 'Clipboard access was refused.', true);
   } finally {
     setBusy(copyImagesButton, false);
-  }
-});
-
-copyTranscriptsButton.addEventListener('click', async () => {
-  setBusy(copyTranscriptsButton, true, 'Finding lectures…');
-  copiedQuestions = null;
-  chatGPTActions.hidden = true;
-  clearMessage();
-
-  try {
-    const granted = await chrome.permissions.request({
-      origins: ['https://www.youtube.com/*'],
-    });
-    if (!granted) throw new Error('YouTube access is required to retrieve captions.');
-
-    const result = await fetchCurrentWeekTranscripts();
-    await navigator.clipboard.writeText(result.text);
-    const skipped = result.total - result.copied;
-    showMessage(
-      `${result.copied} lecture transcript${result.copied === 1 ? '' : 's'} copied`
-      + (skipped ? ` · ${skipped} without English captions` : ''),
-    );
-    chatGPTActions.hidden = false;
-  } catch (error) {
-    console.error('[NPTEL Ease] Transcript copy failed', error);
-    showMessage(error.message || 'Could not copy the lecture transcripts.', true);
-  } finally {
-    setBusy(copyTranscriptsButton, false);
   }
 });
 
