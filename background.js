@@ -33,7 +33,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 async function openChatGPTWithPrompt(prompt, imageDataUrl) {
   const text = typeof prompt === 'string' ? prompt : '';
   const image = typeof imageDataUrl === 'string' ? imageDataUrl : '';
-  const chatTab = await chrome.tabs.create({ url: 'https://chatgpt.com/', active: false });
+  const chatTab = await chrome.tabs.create({ url: 'https://chatgpt.com/', active: true });
   let handoff = { inserted: false, imageAttached: false, error: '' };
 
   try {
@@ -214,8 +214,6 @@ async function openChatGPTWithPrompt(prompt, imageDataUrl) {
   } catch (error) {
     handoff.error = error.message || String(error);
     console.error('[NPTEL Ease] ChatGPT insertion failed; opening the tab normally', error);
-  } finally {
-    await chrome.tabs.update(chatTab.id, { active: true }).catch(() => {});
   }
 
   return handoff;
