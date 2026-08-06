@@ -111,6 +111,7 @@ copyTranscriptsButton.addEventListener('click', async () => {
     }
 
     const videos = await discoverWeekVideos(tab.id, courseId, unitId);
+    console.info('[NPTEL Ease] Discovered weekly videos', videos);
     const result = await chrome.runtime.sendMessage({
       type: 'FETCH_LECTURE_TRANSCRIPTS',
       videos,
@@ -125,6 +126,7 @@ copyTranscriptsButton.addEventListener('click', async () => {
     );
     askChatGPTButton.hidden = false;
   } catch (error) {
+    console.error('[NPTEL Ease] Transcript copy failed', error);
     showMessage(error.message || 'Could not copy the lecture transcripts.', true);
   } finally {
     setBusy(copyTranscriptsButton, false);

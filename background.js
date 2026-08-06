@@ -34,127 +34,194 @@ async function fetchLectureTranscripts(videos) {
     .slice(0, 50);
   if (!validVideos.length) throw new Error('No valid YouTube videos were provided.');
 
-  const apiKey = await getYouTubeApiKey(validVideos[0].videoId);
-  const results = await Promise.allSettled(
-    validVideos.map((video) => fetchEnglishTranscript(video, apiKey)),
-  );
-  const transcripts = results
-    .filter((result) => result.status === 'fulfilled' && result.value)
-    .map((result) => result.value);
-  const skipped = results
-    .map((result, index) => result.status === 'rejected' || !result.value
-      ? validVideos[index].title
-      : null)
-    .filter(Boolean);
+  console.info('[NPTEL Ease] Starting transcript fetch', validVideos);
+  const youtubeTab = await chrome.tabs.create({
+    url: `https://www.youtube.com/watch?v=${encodeURIComponent(validVideos[0].videoId)}&hl=en&autoplay=0`,
+    active: false,
+  });
 
-  if (!transcripts.length) {
-    throw new Error('No uploaded or auto-generated English captions were available.');
-  }
+  try {
+    await waitForTabComplete(youtubeTab.id);
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: youtubeTab.id },
+      world: 'MAIN',
+      func: async (requestedVideos) => {
+        try {
+          for (let attempt = 0; attempt < 50 && !window.ytcfg?.get; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 100));
+          }
 
-  const text = transcripts.map((transcript) => [
-    transcript.title,
-    transcript.link,
-    '',
-    transcript.text,
-  ].join('\n')).join('\n\n---\n\n');
+          const apiKey = window.ytcfg?.get?.('INNERTUBE_API_KEY');
+          if (!apiKey) throw new Error('YouTube page configuration was unavailable.');
+          const clientVersion = '20.10.38';
 
-  return {
-    text,
-    copied: transcripts.length,
-    total: validVideos.length,
-    skipped,
-  };
-}
+          const fetchOne = async (video) => {
+            try {
+              const playerUrl = new URL('/youtubei/v1/player', location.origin);
+              playerUrl.searchParams.set('key', apiKey);
+              playerUrl.searchParams.set('prettyPrint', 'false');
+              const playerResponse = await fetch(playerUrl, {
+                method: 'POST',
+                credentials: 'same-origin',
+                headers: {
+                  'content-type': 'application/json',
+                  'x-youtube-client-name': '3',
+                  'x-youtube-client-version': clientVersion,
+                },
+                body: JSON.stringify({
+                  context: {
+                    client: {
+                      clientName: 'ANDROID',
+                      clientVersion,
+                      androidSdkVersion: 30,
+                      osName: 'Android',
+                      osVersion: '11',
+                      hl: 'en',
+                      gl: 'US',
+                    },
+                  },
+                  videoId: video.videoId,
+                  contentCheckOk: true,
+                  racyCheckOk: true,
+                }),
+              });
 
-async function getYouTubeApiKey(videoId) {
-  const response = await fetch(
-    `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}&hl=en`,
-    { credentials: 'omit' },
-  );
-  if (!response.ok) throw new Error(`YouTube returned HTTP ${response.status}.`);
+              if (!playerResponse.ok) {
+                const preview = (await playerResponse.text()).replace(/\s+/g, ' ').slice(0, 160);
+                throw new Error(`player HTTP ${playerResponse.status}: ${preview}`);
+              }
 
-  const html = await response.text();
-  const apiKey = html.match(/"INNERTUBE_API_KEY":"([^"]+)"/)?.[1];
-  if (!apiKey) throw new Error('YouTube player configuration was unavailable.');
-  return apiKey;
-}
+              const player = await playerResponse.json();
+              const tracks = player.captions
+                ?.playerCaptionsTracklistRenderer
+                ?.captionTracks || [];
+              const isEnglish = (track) => {
+                const language = track.languageCode?.toLowerCase();
+                return language === 'en' || language?.startsWith('en-');
+              };
+              const track = tracks.find((candidate) =>
+                isEnglish(candidate) && candidate.kind !== 'asr')
+                || tracks.find((candidate) =>
+                  isEnglish(candidate) && candidate.kind === 'asr');
 
-async function fetchEnglishTranscript(video, apiKey) {
-  const clientVersion = '20.10.38';
-  const playerUrl = new URL('https://www.youtube.com/youtubei/v1/player');
-  playerUrl.searchParams.set('key', apiKey);
-  playerUrl.searchParams.set('prettyPrint', 'false');
+              if (!track?.baseUrl) {
+                return { status: 'skipped', video, reason: 'No English caption track' };
+              }
 
-  const playerResponse = await fetch(playerUrl, {
-    method: 'POST',
-    credentials: 'omit',
-    headers: {
-      'content-type': 'application/json',
-      'x-youtube-client-name': '3',
-      'x-youtube-client-version': clientVersion,
-    },
-    body: JSON.stringify({
-      context: {
-        client: {
-          clientName: 'ANDROID',
-          clientVersion,
-          androidSdkVersion: 30,
-          osName: 'Android',
-          osVersion: '11',
-          hl: 'en',
-          gl: 'US',
-        },
+              const captionUrl = new URL(track.baseUrl);
+              captionUrl.searchParams.set('fmt', 'json3');
+              const captionResponse = await fetch(captionUrl, { credentials: 'same-origin' });
+              if (!captionResponse.ok) {
+                throw new Error(`captions HTTP ${captionResponse.status}`);
+              }
+
+              const body = await captionResponse.text();
+              if (!body.trim()) throw new Error('Empty caption response');
+              const captions = JSON.parse(body);
+              const lines = [];
+              (captions.events || []).forEach((event) => {
+                if (!Array.isArray(event.segs)) return;
+                const line = event.segs
+                  .map((segment) => segment.utf8 || '')
+                  .join('')
+                  .replace(/\s+/g, ' ')
+                  .trim();
+                if (line && lines.at(-1) !== line) lines.push(line);
+              });
+
+              if (!lines.length) {
+                return { status: 'skipped', video, reason: 'Caption track contained no text' };
+              }
+
+              return {
+                status: 'success',
+                title: video.title || `Lecture ${video.videoId}`,
+                videoId: video.videoId,
+                captionType: track.kind === 'asr' ? 'auto-generated' : 'uploaded',
+                text: lines.join('\n'),
+              };
+            } catch (error) {
+              return {
+                status: 'failed',
+                video,
+                reason: error.message || String(error),
+              };
+            }
+          };
+
+          return { results: await Promise.all(requestedVideos.map(fetchOne)) };
+        } catch (error) {
+          return { error: error.message || String(error) };
+        }
       },
-      videoId: video.videoId,
-      contentCheckOk: true,
-      racyCheckOk: true,
-    }),
-  });
-  if (!playerResponse.ok) {
-    throw new Error(`YouTube player request returned HTTP ${playerResponse.status}.`);
+      args: [validVideos],
+    });
+
+    if (result?.error) throw new Error(result.error);
+    const diagnostics = result?.results || [];
+    console.table(diagnostics.map((entry) => ({
+      title: entry.title || entry.video?.title,
+      videoId: entry.videoId || entry.video?.videoId,
+      status: entry.status,
+      captionType: entry.captionType || '',
+      reason: entry.reason || '',
+    })));
+
+    const transcripts = diagnostics.filter((entry) => entry.status === 'success');
+    const skipped = diagnostics
+      .filter((entry) => entry.status !== 'success')
+      .map((entry) => entry.video?.title || entry.video?.videoId);
+    if (!transcripts.length) {
+      const details = diagnostics
+        .slice(0, 3)
+        .map((entry) => `${entry.video?.title || 'Lecture'}: ${entry.reason}`)
+        .join(' · ');
+      throw new Error(`No English captions could be fetched. ${details}`);
+    }
+
+    const text = transcripts.map((transcript) => [
+      transcript.title,
+      '',
+      transcript.text,
+    ].join('\n')).join('\n\n---\n\n');
+
+    return {
+      text,
+      copied: transcripts.length,
+      total: validVideos.length,
+      skipped,
+    };
+  } finally {
+    await chrome.tabs.remove(youtubeTab.id).catch(() => {});
   }
+}
 
-  const player = await playerResponse.json();
-  const tracks = player.captions
-    ?.playerCaptionsTracklistRenderer
-    ?.captionTracks || [];
-  const isEnglish = (track) => {
-    const language = track.languageCode?.toLowerCase();
-    return language === 'en' || language?.startsWith('en-');
-  };
-  const track = tracks.find((candidate) => isEnglish(candidate) && candidate.kind !== 'asr')
-    || tracks.find((candidate) => isEnglish(candidate) && candidate.kind === 'asr');
-  if (!track?.baseUrl) return null;
+function waitForTabComplete(tabId, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+    };
+    const finish = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      error ? reject(error) : resolve();
+    };
+    const onUpdated = (updatedTabId, changeInfo) => {
+      if (updatedTabId === tabId && changeInfo.status === 'complete') finish();
+    };
+    const timeout = setTimeout(
+      () => finish(new Error('Timed out while loading YouTube.')),
+      timeoutMs,
+    );
 
-  const captionUrl = new URL(track.baseUrl);
-  captionUrl.searchParams.set('fmt', 'json3');
-  const captionResponse = await fetch(captionUrl, { credentials: 'omit' });
-  if (!captionResponse.ok) {
-    throw new Error(`Caption request returned HTTP ${captionResponse.status}.`);
-  }
-
-  const body = await captionResponse.text();
-  if (!body.trim()) throw new Error('YouTube returned an empty caption response.');
-  const captions = JSON.parse(body);
-  const lines = [];
-
-  (captions.events || []).forEach((event) => {
-    if (!Array.isArray(event.segs)) return;
-    const line = event.segs
-      .map((segment) => segment.utf8 || '')
-      .join('')
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (line && lines.at(-1) !== line) lines.push(line);
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.get(tabId)
+      .then((tab) => { if (tab.status === 'complete') finish(); })
+      .catch((error) => finish(error));
   });
-
-  if (!lines.length) return null;
-  return {
-    title: video.title || `Lecture ${video.videoId}`,
-    link: `https://www.youtube.com/watch?v=${video.videoId}`,
-    autoGenerated: track.kind === 'asr',
-    text: lines.join('\n'),
-  };
 }
 
 async function createFullAssignment(tabId) {
