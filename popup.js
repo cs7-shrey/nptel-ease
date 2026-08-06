@@ -12,8 +12,35 @@ const INCLUDE_TRANSCRIPTS_KEY = 'includeLectureTranscripts';
 let copiedQuestions = null;
 
 includeTranscriptsToggle.checked = localStorage.getItem(INCLUDE_TRANSCRIPTS_KEY) === 'true';
+if (includeTranscriptsToggle.checked) {
+  chrome.permissions.contains({
+    origins: ['https://chatgpt.com/*', 'https://www.youtube.com/*'],
+  }).then((granted) => {
+    if (!granted) {
+      includeTranscriptsToggle.checked = false;
+      localStorage.setItem(INCLUDE_TRANSCRIPTS_KEY, 'false');
+    }
+  });
+}
+
 includeTranscriptsToggle.addEventListener('change', () => {
-  localStorage.setItem(INCLUDE_TRANSCRIPTS_KEY, String(includeTranscriptsToggle.checked));
+  const enabled = includeTranscriptsToggle.checked;
+  localStorage.setItem(INCLUDE_TRANSCRIPTS_KEY, String(enabled));
+  if (!enabled) return;
+
+  // Request both handoff permissions from this single, explicit user gesture.
+  chrome.permissions.request({
+    origins: ['https://chatgpt.com/*', 'https://www.youtube.com/*'],
+  }).then((granted) => {
+    if (!granted) {
+      includeTranscriptsToggle.checked = false;
+      localStorage.setItem(INCLUDE_TRANSCRIPTS_KEY, 'false');
+    }
+  }).catch((error) => {
+    console.error('[NPTEL Ease] Permission request failed', error);
+    includeTranscriptsToggle.checked = false;
+    localStorage.setItem(INCLUDE_TRANSCRIPTS_KEY, 'false');
+  });
 });
 
 answerInput.addEventListener('input', () => {
@@ -34,35 +61,35 @@ askChatGPTButton.addEventListener('click', async () => {
   setBusy(
     askChatGPTButton,
     true,
-    includeTranscripts ? 'Fetching transcripts…' : 'Opening ChatGPT…',
+    includeTranscripts ? 'Preparing transcripts…' : 'Opening ChatGPT…',
   );
   clearMessage();
 
   try {
-    const granted = await chrome.permissions.request({ origins: requestedOrigins });
+    // Queue the complete handoff before Chrome's permission dialog closes the popup.
+    // Do not await before permissions.request: it must run in this click gesture.
+    const queuePromise = chrome.runtime.sendMessage({
+      type: 'QUEUE_CHATGPT_HANDOFF',
+      job: {
+        createdAt: Date.now(),
+        requestedOrigins,
+        includeTranscripts,
+        sourceTabId: copiedQuestions?.tabId,
+        sourceUrl: copiedQuestions?.pageUrl,
+        questionText: copiedQuestions?.type === 'text' ? copiedQuestions.text : '',
+        imageDataUrl: copiedQuestions?.type === 'image' ? copiedQuestions.dataUrl : '',
+      },
+    });
+    const permissionPromise = chrome.permissions.request({ origins: requestedOrigins });
+    const [queued, granted] = await Promise.all([queuePromise, permissionPromise]);
+    if (!queued?.ok) throw new Error(queued?.error || 'Could not preserve the ChatGPT handoff.');
+
     if (!granted) {
-      await chrome.tabs.create({ url: 'https://chatgpt.com/' });
+      await chrome.runtime.sendMessage({ type: 'CANCEL_CHATGPT_HANDOFF' });
       return;
     }
 
-    let transcripts = '';
-    if (includeTranscripts) {
-      try {
-        const result = await fetchCurrentWeekTranscripts();
-        transcripts = result.text;
-      } catch (error) {
-        console.warn('[NPTEL Ease] Continuing without lecture transcripts', error);
-      }
-    }
-
-    const questionText = copiedQuestions?.type === 'text' ? copiedQuestions.text : '';
-    const imageDataUrl = copiedQuestions?.type === 'image' ? copiedQuestions.dataUrl : '';
-    const prompt = buildChatGPTPrompt(transcripts, questionText);
-    const result = await chrome.runtime.sendMessage({
-      type: 'OPEN_CHATGPT_WITH_PROMPT',
-      prompt,
-      imageDataUrl,
-    });
+    const result = await chrome.runtime.sendMessage({ type: 'RESUME_CHATGPT_HANDOFF' });
     if (!result?.ok) throw new Error(result?.error || 'Could not open ChatGPT.');
   } catch (error) {
     console.error('[NPTEL Ease] ChatGPT handoff failed', error);
@@ -88,7 +115,12 @@ copyFullButton.addEventListener('click', async () => {
     if (!result?.ok) throw new Error(result?.error || 'Could not prepare the questions.');
 
     if (result.format === 'text') {
-      copiedQuestions = { type: 'text', text: result.text };
+      copiedQuestions = {
+        type: 'text',
+        text: result.text,
+        tabId: tab.id,
+        pageUrl: tab.url,
+      };
       await navigator.clipboard.writeText(result.text);
       showMessage(
         `${result.copied} text question${result.copied === 1 ? '' : 's'} copied · paste into ChatGPT`,
@@ -97,6 +129,8 @@ copyFullButton.addEventListener('click', async () => {
       copiedQuestions = {
         type: 'image',
         dataUrl: `data:image/png;base64,${result.base64}`,
+        tabId: tab.id,
+        pageUrl: tab.url,
       };
       await copyPngResult(result);
       const skipped = result.total - result.copied;
@@ -133,6 +167,8 @@ copyImagesButton.addEventListener('click', async () => {
     copiedQuestions = {
       type: 'image',
       dataUrl: `data:image/png;base64,${result.base64}`,
+      tabId: tab.id,
+      pageUrl: tab.url,
     };
     await copyPngResult(result);
     const skipped = result.total - result.copied;

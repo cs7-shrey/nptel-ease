@@ -4,6 +4,16 @@ const TEXT_WIDTH = 900;
 const TEXT_PADDING = 48;
 const RENDER_SCALE = 2;
 const BACKGROUND = '#ffffff';
+const HANDOFF_DB = 'nptel-ease-handoff';
+const HANDOFF_STORE = 'pending';
+const HANDOFF_KEY = 'chatgpt';
+let resumeHandoffPromise = null;
+
+chrome.permissions.onAdded.addListener(() => {
+  resumePendingChatGPTHandoff().catch((error) => {
+    console.error('[NPTEL Ease] Could not resume permission-gated handoff', error);
+  });
+});
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   let task;
@@ -16,6 +26,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     task = fetchLectureTranscripts(message.videos);
   } else if (message?.type === 'OPEN_CHATGPT_WITH_PROMPT') {
     task = openChatGPTWithPrompt(message.prompt, message.imageDataUrl);
+  } else if (message?.type === 'QUEUE_CHATGPT_HANDOFF') {
+    task = queueChatGPTHandoff(message.job);
+  } else if (message?.type === 'RESUME_CHATGPT_HANDOFF') {
+    task = resumePendingChatGPTHandoff();
+  } else if (message?.type === 'CANCEL_CHATGPT_HANDOFF') {
+    task = deletePendingHandoff().then(() => ({ cancelled: true }));
   } else {
     return;
   }
@@ -29,6 +45,234 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return true;
 });
+
+async function queueChatGPTHandoff(job) {
+  if (!job || !Array.isArray(job.requestedOrigins)) {
+    throw new Error('Invalid pending ChatGPT handoff.');
+  }
+
+  await putPendingHandoff({
+    ...job,
+    createdAt: Number(job.createdAt) || Date.now(),
+  });
+
+  // Covers the race where permission is granted before onAdded reads IndexedDB,
+  // and the no-dialog case where all requested origins were already allowed.
+  chrome.permissions.contains({ origins: job.requestedOrigins }).then((granted) => {
+    if (granted) resumePendingChatGPTHandoff().catch(console.error);
+  });
+  return { queued: true };
+}
+
+function resumePendingChatGPTHandoff() {
+  if (resumeHandoffPromise) return resumeHandoffPromise;
+  resumeHandoffPromise = performPendingChatGPTHandoff()
+    .finally(() => { resumeHandoffPromise = null; });
+  return resumeHandoffPromise;
+}
+
+async function performPendingChatGPTHandoff() {
+  const job = await getPendingHandoff();
+  if (!job) return { pending: false };
+  if (Date.now() - job.createdAt > 10 * 60 * 1000) {
+    await deletePendingHandoff();
+    return { pending: false, expired: true };
+  }
+
+  const granted = await chrome.permissions.contains({ origins: job.requestedOrigins });
+  if (!granted) return { pending: true, waitingForPermission: true };
+
+  // Claim before doing network work so onAdded and popup recovery cannot run twice.
+  await deletePendingHandoff();
+  let transcripts = '';
+  if (job.includeTranscripts) {
+    try {
+      const pageUrl = new URL(job.sourceUrl);
+      const courseId = pageUrl.pathname.match(/\/course\/(noc[^/?]+)/i)?.[1];
+      const unitId = Number(pageUrl.searchParams.get('unitId'));
+      if (!job.sourceTabId || !courseId || !unitId) {
+        throw new Error('The source NPTEL assignment could not be identified.');
+      }
+      const videos = await discoverWeekVideos(job.sourceTabId, courseId, unitId);
+      const result = await fetchLectureTranscripts(videos);
+      transcripts = result.text;
+    } catch (error) {
+      console.warn('[NPTEL Ease] Continuing pending handoff without transcripts', error);
+    }
+  }
+
+  return openChatGPTWithPrompt(
+    buildChatGPTPrompt(transcripts, job.questionText),
+    job.imageDataUrl,
+  );
+}
+
+function buildChatGPTPrompt(transcripts = '', questionText = '') {
+  const sections = [
+    `Answer every multiple-choice question provided below or in the attached image.
+
+Use the lecture transcripts when they are available, together with your own subject knowledge and reasoning. Do not rely exclusively on the transcripts.
+
+For each question:
+1. Identify the correct option or options.
+2. Output the option letters and the full option text.
+3. Briefly explain the reasoning when useful.
+
+After answering all questions, provide a fenced Markdown code block containing only the answer tokens in question order, separated by commas.
+
+For single-choice questions, use a token such as A. For multiple-choice questions, combine the letters without spaces, such as ACD.
+
+Do not include any other text inside the final code block.`,
+  ];
+  if (transcripts) sections.push(`<lecture_transcripts>\n${transcripts}\n</lecture_transcripts>`);
+  if (questionText) sections.push(`<question_content>\n${questionText}\n</question_content>`);
+  return sections.join('\n\n');
+}
+
+function openHandoffDatabase() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(HANDOFF_DB, 1);
+    request.onupgradeneeded = () => {
+      if (!request.result.objectStoreNames.contains(HANDOFF_STORE)) {
+        request.result.createObjectStore(HANDOFF_STORE);
+      }
+    };
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+
+async function runHandoffTransaction(mode, operation) {
+  const database = await openHandoffDatabase();
+  try {
+    return await new Promise((resolve, reject) => {
+      const transaction = database.transaction(HANDOFF_STORE, mode);
+      const request = operation(transaction.objectStore(HANDOFF_STORE));
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+      transaction.onabort = () => reject(transaction.error);
+    });
+  } finally {
+    database.close();
+  }
+}
+
+function putPendingHandoff(job) {
+  return runHandoffTransaction('readwrite', (store) => store.put(job, HANDOFF_KEY));
+}
+
+function getPendingHandoff() {
+  return runHandoffTransaction('readonly', (store) => store.get(HANDOFF_KEY));
+}
+
+function deletePendingHandoff() {
+  return runHandoffTransaction('readwrite', (store) => store.delete(HANDOFF_KEY));
+}
+
+async function discoverWeekVideos(tabId, courseId, unitId) {
+  const [{ result }] = await chrome.scripting.executeScript({
+    target: { tabId },
+    world: 'MAIN',
+    func: async (selectedCourseId, selectedUnitId) => {
+      try {
+        const fetchJson = async (url) => {
+          const response = await fetch(url, { credentials: 'include' });
+          if (!response.ok) throw new Error(`NPTEL returned HTTP ${response.status}.`);
+          let data = await response.json();
+
+          for (let depth = 0; depth < 5; depth += 1) {
+            if (typeof data === 'string') {
+              data = JSON.parse(data);
+            } else if (
+              data
+              && typeof data === 'object'
+              && Object.hasOwn(data, 'payload')
+              && data.payload != null
+            ) {
+              data = data.payload;
+            } else {
+              break;
+            }
+          }
+
+          if (data?.content === 'not visible') {
+            throw new Error('Authenticated NPTEL content is not visible.');
+          }
+          if (data?.status === false && data.message) throw new Error(data.message);
+          return data;
+        };
+
+        const outlineUrl = new URL('/e-learning/api/courseoutline', location.origin);
+        outlineUrl.searchParams.set('course_id', selectedCourseId);
+        const responseData = await fetchJson(outlineUrl);
+        const findOutline = (value, depth = 0) => {
+          if (!value || depth > 5) return null;
+          if (typeof value === 'string') {
+            try {
+              return findOutline(JSON.parse(value), depth + 1);
+            } catch {
+              return null;
+            }
+          }
+          if (typeof value !== 'object') return null;
+          if (value.lessons && value.order) return value;
+          for (const child of Object.values(value)) {
+            const match = findOutline(child, depth + 1);
+            if (match) return match;
+          }
+          return null;
+        };
+        const outline = findOutline(responseData);
+        if (!outline) throw new Error('Course outline fields were not found.');
+
+        const lessons = Object.values(outline.lessons || {});
+        const unitOrder = Array.isArray(outline.order)
+          ? outline.order.find((entry) => Number(entry.id) === selectedUnitId)
+          : null;
+        let lessonIds = (unitOrder?.children || [])
+          .filter((child) => child.section === 'lesson')
+          .map((child) => Number(child.id))
+          .filter((lessonId) => lessons.some((lesson) =>
+            Number(lesson.lesson_id) === lessonId
+            && Number(lesson.unit_id) === selectedUnitId));
+
+        if (!lessonIds.length) {
+          lessonIds = lessons
+            .filter((lesson) => Number(lesson.unit_id) === selectedUnitId)
+            .map((lesson) => Number(lesson.lesson_id));
+        }
+        lessonIds = [...new Set(lessonIds)];
+        if (!lessonIds.length) throw new Error(`No lessons found for unit ${selectedUnitId}.`);
+
+        const lessonResults = await Promise.allSettled(lessonIds.map(async (lessonId) => {
+          const lessonUrl = new URL('/e-learning/api/lesson', location.origin);
+          lessonUrl.searchParams.set('course_id', selectedCourseId);
+          lessonUrl.searchParams.set('unit_id', String(selectedUnitId));
+          lessonUrl.searchParams.set('lesson_id', String(lessonId));
+          const payload = await fetchJson(lessonUrl);
+          const lesson = payload.lesson;
+          const videoId = lesson?.video?.trim();
+          return lesson && videoId
+            ? { title: lesson.title || `Lesson ${lessonId}`, videoId }
+            : null;
+        }));
+
+        return {
+          videos: lessonResults
+            .filter((lesson) => lesson.status === 'fulfilled' && lesson.value)
+            .map((lesson) => lesson.value),
+        };
+      } catch (error) {
+        return { error: error.message || String(error) };
+      }
+    },
+    args: [courseId, unitId],
+  });
+
+  if (result?.error) throw new Error(result.error);
+  if (!result?.videos?.length) throw new Error('No video lectures were found for this week.');
+  return result.videos;
+}
 
 async function openChatGPTWithPrompt(prompt, imageDataUrl) {
   const text = typeof prompt === 'string' ? prompt : '';
