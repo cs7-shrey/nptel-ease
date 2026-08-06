@@ -1,12 +1,15 @@
 const copyFullButton = document.querySelector('#copy-full');
 const copyImagesButton = document.querySelector('#copy-images');
 const copyTranscriptsButton = document.querySelector('#copy-transcripts');
+const chatGPTActions = document.querySelector('#chatgpt-actions');
+const includeTranscriptsToggle = document.querySelector('#include-transcripts');
 const askChatGPTButton = document.querySelector('#ask-chatgpt');
 const fillButton = document.querySelector('#fill-answers');
 const clearButton = document.querySelector('#clear-answers');
 const answerInput = document.querySelector('#answers');
 const answerCount = document.querySelector('#answer-count');
 const message = document.querySelector('#message');
+let copiedQuestions = null;
 
 answerInput.addEventListener('input', () => {
   const answers = parseAnswers(answerInput.value);
@@ -19,15 +22,55 @@ answerInput.addEventListener('keydown', (event) => {
 });
 
 askChatGPTButton.addEventListener('click', async () => {
-  const prompt = `I will paste content containing multiple-choice questions. Answer every question. First, list each answer with its correct option letter and the full option text. Then provide a fenced Markdown code block containing only the option letters (A/B/C/D), in question order, separated by commas. Do not include any other text inside the code block.`;
-  const url = new URL('https://chatgpt.com/');
-  url.searchParams.set('q', prompt);
-  await chrome.tabs.create({ url: url.toString() });
+  const includeTranscripts = includeTranscriptsToggle.checked;
+  const requestedOrigins = ['https://chatgpt.com/*'];
+  if (includeTranscripts) requestedOrigins.push('https://www.youtube.com/*');
+
+  setBusy(
+    askChatGPTButton,
+    true,
+    includeTranscripts ? 'Fetching transcripts…' : 'Opening ChatGPT…',
+  );
+  clearMessage();
+
+  try {
+    const granted = await chrome.permissions.request({ origins: requestedOrigins });
+    if (!granted) {
+      await chrome.tabs.create({ url: 'https://chatgpt.com/' });
+      return;
+    }
+
+    let transcripts = '';
+    if (includeTranscripts) {
+      try {
+        const result = await fetchCurrentWeekTranscripts();
+        transcripts = result.text;
+      } catch (error) {
+        console.warn('[NPTEL Ease] Continuing without lecture transcripts', error);
+      }
+    }
+
+    const questionText = copiedQuestions?.type === 'text' ? copiedQuestions.text : '';
+    const imageDataUrl = copiedQuestions?.type === 'image' ? copiedQuestions.dataUrl : '';
+    const prompt = buildChatGPTPrompt(transcripts, questionText);
+    const result = await chrome.runtime.sendMessage({
+      type: 'OPEN_CHATGPT_WITH_PROMPT',
+      prompt,
+      imageDataUrl,
+    });
+    if (!result?.ok) throw new Error(result?.error || 'Could not open ChatGPT.');
+  } catch (error) {
+    console.error('[NPTEL Ease] ChatGPT handoff failed', error);
+    showMessage(error.message || 'Could not open ChatGPT.', true);
+  } finally {
+    setBusy(askChatGPTButton, false);
+  }
 });
 
 copyFullButton.addEventListener('click', async () => {
   setBusy(copyFullButton, true, 'Preparing…');
-  askChatGPTButton.hidden = true;
+  copiedQuestions = null;
+  chatGPTActions.hidden = true;
   clearMessage();
 
   try {
@@ -40,11 +83,16 @@ copyFullButton.addEventListener('click', async () => {
     if (!result?.ok) throw new Error(result?.error || 'Could not prepare the questions.');
 
     if (result.format === 'text') {
+      copiedQuestions = { type: 'text', text: result.text };
       await navigator.clipboard.writeText(result.text);
       showMessage(
         `${result.copied} text question${result.copied === 1 ? '' : 's'} copied · paste into ChatGPT`,
       );
     } else {
+      copiedQuestions = {
+        type: 'image',
+        dataUrl: `data:image/png;base64,${result.base64}`,
+      };
       await copyPngResult(result);
       const skipped = result.total - result.copied;
       showMessage(
@@ -54,7 +102,7 @@ copyFullButton.addEventListener('click', async () => {
       );
     }
 
-    askChatGPTButton.hidden = false;
+    chatGPTActions.hidden = false;
   } catch (error) {
     showMessage(error.message || 'Clipboard access was refused.', true);
   } finally {
@@ -64,7 +112,8 @@ copyFullButton.addEventListener('click', async () => {
 
 copyImagesButton.addEventListener('click', async () => {
   setBusy(copyImagesButton, true, 'Stacking…');
-  askChatGPTButton.hidden = true;
+  copiedQuestions = null;
+  chatGPTActions.hidden = true;
   clearMessage();
 
   try {
@@ -76,6 +125,10 @@ copyImagesButton.addEventListener('click', async () => {
 
     if (!result?.ok) throw new Error(result?.error || 'Could not prepare the images.');
 
+    copiedQuestions = {
+      type: 'image',
+      dataUrl: `data:image/png;base64,${result.base64}`,
+    };
     await copyPngResult(result);
     const skipped = result.total - result.copied;
     showMessage(
@@ -83,7 +136,7 @@ copyImagesButton.addEventListener('click', async () => {
       + (skipped ? ` · ${skipped} skipped` : '')
       + ' · paste into ChatGPT',
     );
-    askChatGPTButton.hidden = false;
+    chatGPTActions.hidden = false;
   } catch (error) {
     showMessage(error.message || 'Clipboard access was refused.', true);
   } finally {
@@ -93,7 +146,8 @@ copyImagesButton.addEventListener('click', async () => {
 
 copyTranscriptsButton.addEventListener('click', async () => {
   setBusy(copyTranscriptsButton, true, 'Finding lectures…');
-  askChatGPTButton.hidden = true;
+  copiedQuestions = null;
+  chatGPTActions.hidden = true;
   clearMessage();
 
   try {
@@ -102,29 +156,14 @@ copyTranscriptsButton.addEventListener('click', async () => {
     });
     if (!granted) throw new Error('YouTube access is required to retrieve captions.');
 
-    const tab = await getActiveNptelTab();
-    const pageUrl = new URL(tab.url);
-    const courseId = pageUrl.pathname.match(/\/course\/(noc[^/?]+)/i)?.[1];
-    const unitId = Number(pageUrl.searchParams.get('unitId'));
-    if (!courseId || !unitId) {
-      throw new Error('Open an NPTEL assignment page with a course and unit ID first.');
-    }
-
-    const videos = await discoverWeekVideos(tab.id, courseId, unitId);
-    console.info('[NPTEL Ease] Discovered weekly videos', videos);
-    const result = await chrome.runtime.sendMessage({
-      type: 'FETCH_LECTURE_TRANSCRIPTS',
-      videos,
-    });
-    if (!result?.ok) throw new Error(result?.error || 'Could not retrieve the transcripts.');
-
+    const result = await fetchCurrentWeekTranscripts();
     await navigator.clipboard.writeText(result.text);
     const skipped = result.total - result.copied;
     showMessage(
       `${result.copied} lecture transcript${result.copied === 1 ? '' : 's'} copied`
       + (skipped ? ` · ${skipped} without English captions` : ''),
     );
-    askChatGPTButton.hidden = false;
+    chatGPTActions.hidden = false;
   } catch (error) {
     console.error('[NPTEL Ease] Transcript copy failed', error);
     showMessage(error.message || 'Could not copy the lecture transcripts.', true);
@@ -205,6 +244,52 @@ function parseAnswers(value) {
     .split(/[\s,]+/)
     .map((answer) => answer.trim())
     .filter(Boolean);
+}
+
+function buildChatGPTPrompt(transcripts = '', questionText = '') {
+  const sections = [
+    `Answer every multiple-choice question provided below or in the attached image.
+
+Use the lecture transcripts when they are available, together with your own subject knowledge and reasoning. Do not rely exclusively on the transcripts.
+
+For each question:
+1. Identify the correct option or options.
+2. Output the option letters and the full option text.
+3. Briefly explain the reasoning when useful.
+
+After answering all questions, provide a fenced Markdown code block containing only the answer tokens in question order, separated by commas.
+
+For single-choice questions, use a token such as A. For multiple-choice questions, combine the letters without spaces, such as ACD.
+
+Do not include any other text inside the final code block.`,
+  ];
+
+  if (transcripts) {
+    sections.push(`<lecture_transcripts>\n${transcripts}\n</lecture_transcripts>`);
+  }
+  if (questionText) {
+    sections.push(`<question_content>\n${questionText}\n</question_content>`);
+  }
+  return sections.join('\n\n');
+}
+
+async function fetchCurrentWeekTranscripts() {
+  const tab = await getActiveNptelTab();
+  const pageUrl = new URL(tab.url);
+  const courseId = pageUrl.pathname.match(/\/course\/(noc[^/?]+)/i)?.[1];
+  const unitId = Number(pageUrl.searchParams.get('unitId'));
+  if (!courseId || !unitId) {
+    throw new Error('Open an NPTEL assignment page with a course and unit ID first.');
+  }
+
+  const videos = await discoverWeekVideos(tab.id, courseId, unitId);
+  console.info('[NPTEL Ease] Discovered weekly videos', videos);
+  const result = await chrome.runtime.sendMessage({
+    type: 'FETCH_LECTURE_TRANSCRIPTS',
+    videos,
+  });
+  if (!result?.ok) throw new Error(result?.error || 'Could not retrieve the transcripts.');
+  return result;
 }
 
 async function discoverWeekVideos(tabId, courseId, unitId) {

@@ -195,6 +195,70 @@ button.follow-up {
   border-color: #44444b;
 }
 
+.handoff { margin-top: 8px; }
+
+.toggle-row {
+  display: flex;
+  min-height: 46px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 0 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: #101012;
+  cursor: pointer;
+}
+
+.toggle-row strong,
+.toggle-row small { display: block; }
+.toggle-row strong { color: #d7d7dc; font-size: 10px; font-weight: 600; }
+.toggle-row small { margin-top: 3px; color: #6f6f78; font-size: 9px; font-weight: 400; }
+
+.toggle-row input {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  opacity: 0;
+}
+
+.toggle {
+  position: relative;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 18px;
+  margin-left: 12px;
+  border: 1px solid #45454d;
+  border-radius: 999px;
+  background: #29292e;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.toggle::after {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #8c8c95;
+  content: "";
+  transition: transform 120ms ease, background 120ms ease;
+}
+
+.toggle-row input:checked + .toggle {
+  border-color: #f06a6a;
+  background: var(--accent);
+}
+
+.toggle-row input:checked + .toggle::after {
+  transform: translateX(12px);
+  background: #fff;
+}
+
+.toggle-row:has(input:focus-visible) { outline: 2px solid #fff; outline-offset: 2px; }
+
 .arrow {
   color: rgba(255, 255, 255, 0.68);
   font-family: ui-monospace, "SFMono-Regular", Consolas, monospace;

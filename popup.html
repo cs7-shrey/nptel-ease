@@ -38,10 +38,20 @@
           <span>Copy lecture transcripts</span>
           <span class="arrow" aria-hidden="true">TXT</span>
         </button>
-        <button id="ask-chatgpt" class="secondary follow-up" type="button" hidden>
-          <span>Ask ChatGPT</span>
-          <span class="arrow" aria-hidden="true">↗</span>
-        </button>
+        <div id="chatgpt-actions" class="handoff" hidden>
+          <label class="toggle-row" for="include-transcripts">
+            <span>
+              <strong>Include lecture transcripts</strong>
+              <small>Uses this week’s English captions</small>
+            </span>
+            <input id="include-transcripts" type="checkbox">
+            <span class="toggle" aria-hidden="true"></span>
+          </label>
+          <button id="ask-chatgpt" class="secondary" type="button">
+            <span>Open in ChatGPT</span>
+            <span class="arrow" aria-hidden="true">↗</span>
+          </button>
+        </div>
       </section>
 
       <section class="tool" aria-labelledby="answers-title">

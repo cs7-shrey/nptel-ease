@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "NPTEL Ease",
   "description": "Copies NPTEL questions and weekly lecture transcripts, fills answer choices, and hands prompts off to ChatGPT.",
-  "version": "2.2",
+  "version": "2.3",
   "permissions": [
     "activeTab",
     "scripting",
@@ -13,7 +13,8 @@
     "https://storage.googleapis.com/*"
   ],
   "optional_host_permissions": [
-    "https://www.youtube.com/*"
+    "https://www.youtube.com/*",
+    "https://chatgpt.com/*"
   ],
   "background": {
     "service_worker": "background.js"

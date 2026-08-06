@@ -14,6 +14,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     task = stackQuestionImages(message.tabId);
   } else if (message?.type === 'FETCH_LECTURE_TRANSCRIPTS') {
     task = fetchLectureTranscripts(message.videos);
+  } else if (message?.type === 'OPEN_CHATGPT_WITH_PROMPT') {
+    task = openChatGPTWithPrompt(message.prompt, message.imageDataUrl);
   } else {
     return;
   }
@@ -27,6 +29,174 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return true;
 });
+
+async function openChatGPTWithPrompt(prompt, imageDataUrl) {
+  const text = typeof prompt === 'string' ? prompt : '';
+  const image = typeof imageDataUrl === 'string' ? imageDataUrl : '';
+  const chatTab = await chrome.tabs.create({ url: 'https://chatgpt.com/', active: false });
+  let handoff = { inserted: false, imageAttached: false, error: '' };
+
+  try {
+    await waitForTabComplete(chatTab.id, 30000);
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: chatTab.id },
+      world: 'MAIN',
+      func: async (content, pngDataUrl) => {
+        const findEditor = () => document.querySelector([
+          '#prompt-textarea[contenteditable="true"]',
+          '[data-lexical-editor="true"][contenteditable="true"]',
+          '.ProseMirror[contenteditable="true"]',
+          'main [contenteditable="true"]',
+        ].join(','));
+
+        let element = null;
+        for (let attempt = 0; attempt < 200 && !element; attempt += 1) {
+          element = findEditor();
+          if (!element) await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        if (!(element instanceof HTMLElement) || !element.isContentEditable) {
+          return {
+            inserted: false,
+            imageAttached: false,
+            error: 'ChatGPT prompt editor was not found.',
+          };
+        }
+
+        let imageAttached = false;
+        let imageMethod = null;
+        let imageError = '';
+        if (pngDataUrl?.startsWith('data:image/png;base64,')) {
+          try {
+            const encoded = pngDataUrl.slice(pngDataUrl.indexOf(',') + 1);
+            const binary = atob(encoded);
+            const bytes = new Uint8Array(binary.length);
+            for (let index = 0; index < binary.length; index += 1) {
+              bytes[index] = binary.charCodeAt(index);
+            }
+            const file = new File([bytes], 'nptel-questions.png', { type: 'image/png' });
+
+            element.focus();
+            const pasteData = new DataTransfer();
+            pasteData.items.add(file);
+            const pasteHandled = !element.dispatchEvent(new ClipboardEvent('paste', {
+              bubbles: true,
+              cancelable: true,
+              composed: true,
+              clipboardData: pasteData,
+            }));
+
+            if (pasteHandled) {
+              imageAttached = true;
+              imageMethod = 'paste-event';
+              await new Promise((resolve) => setTimeout(resolve, 1200));
+            } else {
+              let fileInput = [...document.querySelectorAll('input[type="file"]')]
+                .find((input) => !input.accept || input.accept.includes('image'));
+              if (!fileInput) {
+                const attachButton = document.querySelector([
+                  'button[aria-label*="attach" i]',
+                  'button[aria-label*="upload" i]',
+                  '[data-testid*="attach" i]',
+                  '[data-testid="composer-plus-btn"]',
+                ].join(','));
+                attachButton?.click();
+
+                for (let attempt = 0; attempt < 30 && !fileInput; attempt += 1) {
+                  await new Promise((resolve) => setTimeout(resolve, 100));
+                  fileInput = [...document.querySelectorAll('input[type="file"]')]
+                    .find((input) => !input.accept || input.accept.includes('image'));
+                }
+              }
+
+              if (fileInput instanceof HTMLInputElement) {
+                const files = new DataTransfer();
+                files.items.add(file);
+                fileInput.files = files.files;
+                fileInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+                fileInput.dispatchEvent(new Event('change', { bubbles: true, composed: true }));
+                imageAttached = true;
+                imageMethod = 'file-input';
+                await new Promise((resolve) => setTimeout(resolve, 1200));
+              } else {
+                imageError = 'ChatGPT file input was not found.';
+              }
+            }
+          } catch (error) {
+            imageError = error.message || String(error);
+          }
+        }
+
+        element.focus();
+        const selection = window.getSelection();
+        const range = document.createRange();
+        range.selectNodeContents(element);
+        range.collapse(false);
+        selection.removeAllRanges();
+        selection.addRange(range);
+
+        const before = element.textContent || '';
+        const clipboardData = new DataTransfer();
+        clipboardData.setData('text/plain', content);
+        const notCancelled = element.dispatchEvent(new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          clipboardData,
+        }));
+
+        if (notCancelled || (element.textContent || '') === before) {
+          const currentSelection = window.getSelection();
+          if (!currentSelection.rangeCount) {
+            return {
+              inserted: false,
+              imageAttached,
+              imageMethod,
+              error: 'No active ChatGPT caret range.',
+              imageError,
+            };
+          }
+
+          const activeRange = currentSelection.getRangeAt(0);
+          activeRange.deleteContents();
+          const textNode = document.createTextNode(content);
+          activeRange.insertNode(textNode);
+          activeRange.setStartAfter(textNode);
+          activeRange.collapse(true);
+          currentSelection.removeAllRanges();
+          currentSelection.addRange(activeRange);
+          element.dispatchEvent(new InputEvent('input', {
+            bubbles: true,
+            composed: true,
+            inputType: 'insertFromPaste',
+            data: content,
+          }));
+        }
+
+        return {
+          inserted: (element.textContent || '').includes(content.slice(0, 80)),
+          imageAttached,
+          imageMethod,
+          imageError,
+          error: '',
+        };
+      },
+      args: [text, image],
+    });
+    handoff = result || handoff;
+    console.info('[NPTEL Ease] ChatGPT handoff', {
+      ...handoff,
+      promptChars: text.length,
+      hasImage: Boolean(image),
+    });
+  } catch (error) {
+    handoff.error = error.message || String(error);
+    console.error('[NPTEL Ease] ChatGPT insertion failed; opening the tab normally', error);
+  } finally {
+    await chrome.tabs.update(chatTab.id, { active: true }).catch(() => {});
+  }
+
+  return handoff;
+}
 
 async function fetchLectureTranscripts(videos) {
   const validVideos = (Array.isArray(videos) ? videos : [])
