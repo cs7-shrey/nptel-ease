@@ -172,12 +172,35 @@ async function openChatGPTWithPrompt(prompt, imageDataUrl) {
           }));
         }
 
+        const inserted = (element.textContent || '').includes(content.slice(0, 80));
+        let submitted = false;
+        const readyToSubmit = inserted && (!pngDataUrl || imageAttached);
+        if (readyToSubmit) {
+          for (let attempt = 0; attempt < 30 && !submitted; attempt += 1) {
+            await new Promise((resolve) => setTimeout(resolve, 2000));
+            const sendButton = document.querySelector('button[aria-label="Send prompt"]');
+            if (
+              sendButton instanceof HTMLButtonElement
+              && !sendButton.disabled
+              && sendButton.getAttribute('aria-disabled') !== 'true'
+            ) {
+              sendButton.click();
+              submitted = true;
+            }
+          }
+        }
+
         return {
-          inserted: (element.textContent || '').includes(content.slice(0, 80)),
+          inserted,
+          submitted,
           imageAttached,
           imageMethod,
           imageError,
-          error: '',
+          error: submitted
+            ? ''
+            : (pngDataUrl && !imageAttached
+              ? (imageError || 'The question image was not attached.')
+              : 'ChatGPT send button did not become available.'),
         };
       },
       args: [text, image],
