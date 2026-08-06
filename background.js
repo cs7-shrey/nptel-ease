@@ -306,6 +306,34 @@ async function openChatGPTWithPrompt(prompt, imageDataUrl) {
           };
         }
 
+        // Remove any draft ChatGPT restored before adding this handoff.
+        element.focus();
+        if (element.textContent) {
+          const clearSelection = window.getSelection();
+          const clearRange = document.createRange();
+          clearRange.selectNodeContents(element);
+          clearSelection.removeAllRanges();
+          clearSelection.addRange(clearRange);
+
+          const beforeClear = element.textContent;
+          const clearHandled = !element.dispatchEvent(new InputEvent('beforeinput', {
+            bubbles: true,
+            cancelable: true,
+            composed: true,
+            inputType: 'deleteContentBackward',
+            data: null,
+          }));
+          if (!clearHandled || element.textContent === beforeClear) {
+            clearRange.deleteContents();
+            element.dispatchEvent(new InputEvent('input', {
+              bubbles: true,
+              composed: true,
+              inputType: 'deleteContentBackward',
+              data: null,
+            }));
+          }
+        }
+
         let imageAttached = false;
         let imageMethod = null;
         let imageError = '';
